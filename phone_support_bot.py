@@ -60,7 +60,7 @@ class AppointmentBooking(BaseModel):
     issue: str = Field(..., description="Description of issue")
     preferred_date: str = Field(..., description="Preferred appointment date (YYYY-MM-DD)")
     preferred_time: str = Field(..., description="Preferred time slot")
-    contact: str = Field(..., description=:"Contact phone or email")
+    contact: str = Field(..., description="Contact phone or email")
 
 ''' IMPLEMENTING THE TOOL FUNCTIONS '''
 # mock database for demonstration, in rea life it will connect to actual databases
@@ -237,3 +237,144 @@ def provide_troubleshooting(issue: str) -> str:
 
 print("✅ Tool functions defined successfully!")
 
+
+''' Building the LangGraph Agent '''
+''' creating the graph nodes '''
+# defining router function
+def router(state: AgentState) -> str:
+    """Route to appropriate node based on conversation state"""
+    last_message = state["messages"][-1]
+
+    if isinstance(last_message, HumanMessage):
+        query = last_message.content.lower()
+
+        # Check for specific intents
+        if any(word in query for word in ["phone", "model", "spec", "price", "buy"]):
+            return "product_info"
+        elif any(word in query for word in ["repair", "fix", "broken", "damage"]):
+            return "repair_info"
+        elif any(word in query for word in ["status", "track", "check", "ticket"]):
+            return "status_check"
+        elif any(word in query for word in ["appointment", "schedule", "book", "meet"]):
+            return "appointment"
+        elif any(word in query for word in ["help", "trouble", "issue", "problem"]):
+            return "troubleshooting"
+        elif any(word in query for word in ["warranty", "guarantee", "cover"]):
+            return "warranty_check"
+        elif any(word in query for word in ["contact", "store", "location", "hours"]):
+            return "contact_info"
+        elif any(word in query for word in ["human", "agent", "speak to", "representative"]):
+            return "human_escalation"
+        else:
+            return "general_chat"
+
+    return "general_chat"
+
+# Define node functions
+def product_info_node(state: AgentState) -> dict:
+    """Handle product information queries"""
+    query = state["messages"][-1].content
+    response = get_phone_info(model=query)  # Simplified
+    state["messages"].append(AIMessage(content=response))
+    state["current_step"] = "product_info"
+    return state
+
+def repair_info_node(state: AgentState) -> dict:
+    """Handle repair service queries"""
+    query = state["messages"][-1].content
+    # Extract info from query (in real app, use NLP)
+    if "screen" in query.lower():
+        issue = "screen"
+    elif "battery" in query.lower():
+        issue = "battery"
+    else:
+        issue = "general repair"
+
+    response = get_repair_info(phone_type="Phone", issue=issue)
+    state["messages"].append(AIMessage(content=response))
+    state["current_step"] = "repair_info"
+    return state
+
+def status_check_node(state: AgentState) -> dict:
+    """Handle status check queries"""
+    query = state["messages"][-1].content
+    # Extract ticket number (in real app, use regex)
+    ticket_num = None
+    if "TICKET" in query:
+        import re
+        match = re.search(r'TICKET-\d+', query)
+        if match:
+            ticket_num = match.group()
+
+    response = check_repair_status(ticket_number=ticket_num)
+    state["messages"].append(AIMessage(content=response))
+    state["current_step"] = "status_check"
+    return state
+
+def appointment_node(state: AgentState) -> dict:
+    """Handle appointment booking"""
+    query = state["messages"][-1].content
+
+    # In full implementation, we'd collect information over multiple steps
+    response = "To book an appointment, I'll need:\n1. Your name\n2. Phone model\n3. Issue description\n4. Preferred date & time\n5. Contact info\n\nPlease provide these details or say 'book appointment' to start the process."
+
+    if "book appointment" in query.lower():
+        # Start booking process
+        response = "Let's book your appointment! What's your name?"
+        state["collected_info"] = {"step": "get_name"}
+
+    state["messages"].append(AIMessage(content=response))
+    state["current_step"] = "appointment_booking"
+    return state
+
+def general_chat_node(state: AgentState) -> dict:
+    """Handle general conversation using LLM"""
+    # Get conversation history
+    conversation = state["messages"]
+
+    # Create system prompt
+    system_prompt = """You are a helpful customer support agent for PhoneHub, a phone sales and repair store.
+    You can help with:
+    - Phone information and specifications
+    - Repair services and pricing
+    - Checking repair status
+    - Booking appointments
+    - Basic troubleshooting
+    - Warranty information
+    - Store locations and hours
+
+    Be friendly, professional, and helpful. If you don't know something, offer to connect the customer with a human agent."""
+
+    # Prepare messages for LLM
+    messages = [{"role": "system", "content": system_prompt}]
+    for msg in conversation[-5:]:  # Last 5 messages for context
+        if isinstance(msg, HumanMessage):
+            messages.append({"role": "user", "content": msg.content})
+        elif isinstance(msg, AIMessage):
+            messages.append({"role": "assistant", "content": msg.content})
+
+    # Get response from LLM
+    response = llm.invoke(messages)
+
+    state["messages"].append(AIMessage(content=response.content))
+    state["current_step"] = "general_chat"
+    return state
+
+def human_escalation_node(state: AgentState) -> dict:
+    """Escalate to human agent"""
+    response = """I'm connecting you to a human agent now.
+
+    In the meantime:
+    - Call: 1-800-PHONEHUB
+    - Email: support@phonehub.com
+    - Live Chat: Available on our website
+
+    Estimated wait time: 5 minutes.
+    Please have your ticket/order number ready."""
+
+    state["messages"].append(AIMessage(content=response))
+    state["needs_human"] = True
+    state["current_step"] = "human_escalation"
+    return state
+
+print("✅ Graph nodes defined successfully!")
