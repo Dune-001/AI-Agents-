@@ -378,3 +378,45 @@ def human_escalation_node(state: AgentState) -> dict:
     return state
 
 print("✅ Graph nodes defined successfully!")
+
+''' building and compiling the graph '''
+# build the graph
+workflow = StateGraph(AgentState)
+
+# adding nodes
+workflow.add_node("product_info", product_info_node)
+workflow.add_node("repair_info", repair_info_node)
+workflow.add_node("status_check", status_check_node)
+workflow.add_node("appointment", appointment_node)
+workflow.add_node("general_chat", general_chat_node)
+workflow.add_node("human_escalation", human_escalation_node)
+
+# entry point
+workflow.set_entry_point("general_chat")
+
+# conditional edges
+workflow.add_conditional_edges(
+    "general_chat",
+    router,
+    {
+        "product_info": "product_info",
+        "repair_info": "repair_-info",
+        "status_check": "status_check",
+        "appointment": "appointment",
+        "human_escalation": "human_escalation",
+        "general_chat": "general_chat"
+    }
+)
+
+# adding edges from other nodes back to general_chat
+for node in ["product_info", "repair_info", "status_check", "appointment"]:
+    workflow.add_edge(node, "general_chat")
+
+# human escalation ends conversation
+workflow.add_edge("human_escalation", END)
+
+# compile the graph
+app = workflow.compile()
+
+print("Graph built and compiled successfully!")
+print("customer support bot is ready")
