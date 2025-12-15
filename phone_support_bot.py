@@ -3,21 +3,29 @@ from typing import TypedDict, Annotated, List, Optional
 from datetime import datetime
 import operator
 from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
+# from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import HumanMessage, AIMessage
 from pydantic import BaseModel, Field
 import json
+from langchain_community.chat_models import ChatOllama
 
 ''' THE IMPORTS '''
 # load environment variables
 load_dotenv()
 
 # initializing ChatGpt
-llm = ChatOpenAI(
+'''llm = ChatOpenAI(
     model="gpt-3.5-turbo",
     temperature=0.3,
     api_key=os.getenv("OPENAI_API_KEY")
+)'''
+
+# initialising local llm via Ollama
+llm = ChatOllama(
+    model="llama3.2:1b-instruct-q4_0",
+    temperature=0.3,
+    base_url="http://localhost:11434"
 )
 
 # defining state structure
@@ -400,7 +408,7 @@ workflow.add_conditional_edges(
     router,
     {
         "product_info": "product_info",
-        "repair_info": "repair_-info",
+        "repair_info": "repair_info",
         "status_check": "status_check",
         "appointment": "appointment",
         "human_escalation": "human_escalation",
@@ -420,3 +428,55 @@ app = workflow.compile()
 
 print("Graph built and compiled successfully!")
 print("customer support bot is ready")
+
+# test function
+def test_bot():
+    """Test the customer support bot"""
+    print("\n" + "="*50)
+    print("PHONEHUB CUSTOMER SUPPORT BOT")
+    print("="*50)
+    print("\nType 'quit' to exit, 'human' to speak with agent\n")
+
+    # Initial state
+    initial_state = AgentState(
+        messages=[],
+        user_query="",
+        customer_name=None,
+        current_step="start",
+        needs_human=False,
+        collected_info={}
+    )
+
+    while True:
+        # Get user input
+        user_input = input("\n👤 You: ").strip()
+
+        if user_input.lower() == 'quit':
+            print("Goodbye! 👋")
+            break
+
+        if user_input.lower() == 'human':
+            user_input = "I want to speak with a human agent"
+
+        # Add user message to state
+        initial_state["messages"].append(HumanMessage(content=user_input))
+
+        # Invoke the graph
+        result = app.invoke(initial_state, {"recursion_limit":100})
+
+        # Get the last AI response
+        last_message = result["messages"][-1]
+
+        print(f"\n🤖 Bot: {last_message.content}")
+
+        # Update state
+        initial_state = result
+
+        # Check if human escalation occurred
+        if result.get("needs_human"):
+            print("\n⚠️  Please wait while we connect you to a human agent...")
+            break
+
+# Run test if script is executed directly
+if __name__ == "__main__":
+    test_bot()
