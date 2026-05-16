@@ -23,7 +23,7 @@ load_dotenv()
 
 # initialising local llm via Ollama
 llm = ChatOllama(
-    model="llama3.2:1b-instruct-q4_0",
+    model="llama3.2:1b",
     temperature=0.3,
     base_url="http://localhost:11434"
 )
@@ -39,7 +39,7 @@ class AgentState(TypedDict):
     collected_info: dict # information collected during conversation
 
 print("Environment setup complete!")
-print("LLM initialized with gpt-4.1-mini")
+print("LLM initialized with Ollama llama3.2:1b")
 
 ''' CREATING TOOL SCHEMAS '''
 # define Pydantic models for our tools
@@ -71,7 +71,7 @@ class AppointmentBooking(BaseModel):
     contact: str = Field(..., description="Contact phone or email")
 
 ''' IMPLEMENTING THE TOOL FUNCTIONS '''
-# mock database for demonstration, in rea life it will connect to actual databases
+# mock database for demonstration, in real life it will connect to actual databases
 # Mock database for demonstration
 # In real application, connect to actual databases
 PHONE_INVENTORY = {
