@@ -399,6 +399,8 @@ workflow.add_node("appointment", appointment_node)
 workflow.add_node("general_chat", general_chat_node)
 workflow.add_node("human_escalation", human_escalation_node)
 
+# this block led to many AI calls for one message so it will be chopped off
+''' 
 # entry point
 workflow.set_entry_point("general_chat")
 
@@ -422,6 +424,7 @@ for node in ["product_info", "repair_info", "status_check", "appointment"]:
 
 # human escalation ends conversation
 workflow.add_edge("human_escalation", END)
+'''
 
 # compile the graph
 app = workflow.compile()
