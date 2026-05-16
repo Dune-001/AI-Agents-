@@ -319,21 +319,59 @@ def status_check_node(state: AgentState) -> dict:
     state["current_step"] = "status_check"
     return state
 
+# Handled in steps to give direction
 def appointment_node(state: AgentState) -> dict:
     """Handle appointment booking"""
     query = state["messages"][-1].content
-
-    # In full implementation, we'd collect information over multiple steps
-    response = "To book an appointment, I'll need:\n1. Your name\n2. Phone model\n3. Issue description\n4. Preferred date & time\n5. Contact info\n\nPlease provide these details or say 'book appointment' to start the process."
-
-    if "book appointment" in query.lower():
-        # Start booking process
+    collected = state.get("collected_info", {})
+    
+    # start booking process
+    if not collected:
         response = "Let's book your appointment! What's your name?"
         state["collected_info"] = {"step": "get_name"}
+    
+    elif collected("step") == "get_name":
+        collected["customer_name"] = query
+        collected["step"] = "phone_model"
+        response = "What phone model do you need repaired?"
+        
+    elif collected("step") == "phone_model":
+        collected["phone_type"] = query
+        collected["step"] = "issue"
+        response = "Please describe the issue with your phone."
+        
+    elif collected("step") == "issue":
+        collected["issue"] = query
+        collected["step"] = "date"
+        response = "What date would you prefer? (YYYY-MM-DD)"
+        
+    elif collected("step") == "date":
+        collected["date"] = query
+        collected["step"] = "time"
+        response = "What time would you prefer? (e.g., 2:00 PM)"
+        
+    elif collected("step") == "time":
+        collected["time"] = query
+        
+        response = book_appointment(
+            customer_name=collected["customer_name"],
+            phone_type=collected["phone_model"],
+            issue=collected["issue"],
+            preferred_date=collected["date"],
+            preferred_time=collected["time"]
+            contact="Not Provided"
+        )
+        
+        collected["step"] = "completed"
+    else:
+        response = "Your appointment is already booked. If you want to book another, please let me know!"
 
+    state["collected_info"] = collected
     state["messages"].append(AIMessage(content=response))
     state["current_step"] = "appointment_booking"
+    
     return state
+
 
 def general_chat_node(state: AgentState) -> dict:
     """Handle general conversation using LLM"""
@@ -373,8 +411,8 @@ def human_escalation_node(state: AgentState) -> dict:
     response = """I'm connecting you to a human agent now.
 
     In the meantime:
-    - Call: 1-800-PHONEHUB
-    - Email: support@phonehub.com
+    - Call: +254748433574
+    - Email: daggerone24@gmail.com
     - Live Chat: Available on our website
 
     Estimated wait time: 5 minutes.
@@ -426,6 +464,36 @@ for node in ["product_info", "repair_info", "status_check", "appointment"]:
 workflow.add_edge("human_escalation", END)
 '''
 
+''' This is the replacement for the above block to avoid multiple LLM calls '''
+# Router node
+workflow.add_node("router", lambda state: (state))
+
+# router as entry point
+workflow.set_entry_point("router")
+
+# router decides destination immediatley
+workflow.add_conditional_edges(
+    "router",
+    router,
+    {
+        "product_info": "product_info",
+        "repair_info": "repair_info",
+        "status_check": "status_check",
+        "appointment": "appointment",
+        "human_escalation": "human_escalation",
+        "general_chat": "general_chat"
+    }
+)
+
+# End all nodes after response
+workflow.add_edge("product_info", END)
+workflow.add_edge("repair_info", END)
+workflow.add_edge("status_check", END)
+workflow.add_edge("appointment", END)
+workflow.add_edge("general_chat", END)
+workflow.add_edge("human_escalation", END)
+
+
 # compile the graph
 app = workflow.compile()
 
@@ -453,8 +521,11 @@ def test_bot():
     while True:
         # Get user input
         user_input = input("\n👤 You: ").strip()
+        if not user_input:
+                print("⚠️ Please enter a message.")
+                continue
 
-        if user_input.lower() == 'quit':
+        if user_input.lower() in ['quit', 'exit', 'bye', 'close']:
             print("Goodbye! 👋")
             break
 
