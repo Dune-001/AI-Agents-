@@ -358,7 +358,7 @@ def appointment_node(state: AgentState) -> dict:
             phone_type=collected["phone_model"],
             issue=collected["issue"],
             preferred_date=collected["date"],
-            preferred_time=collected["time"]
+            preferred_time=collected["time"],
             contact="Not Provided"
         )
         
