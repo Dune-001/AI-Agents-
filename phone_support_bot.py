@@ -248,8 +248,22 @@ print("✅ Tool functions defined successfully!")
 
 ''' Building the LangGraph Agent '''
 ''' creating the graph nodes '''
+
+#defining intents for routing
+INTENTS = [
+    "product_info",
+    "repair_info",
+    "status_check",
+    "appointment",
+    "troubleshooting",
+    "warranty_check",
+    "contact_info",
+    "human_escalation"
+]
+
 # defining router function
 def router(state: AgentState) -> str:
+    ''' This router function was flawed, replacing it with an AI powered inten router 
     """Route to appropriate node based on conversation state"""
     last_message = state["messages"][-1]
 
@@ -275,7 +289,46 @@ def router(state: AgentState) -> str:
             return "human_escalation"
         else:
             return "general_chat"
+        '''
+        
+    """AI-powered intent router"""
+    
+    last_message = state["messages"][-1]
+    if not isinstance(last_message, HumanMessage):
+        return "general_chat"
+    
+    query = last_message.content
+    
+    routing_prompt = f"""
+    You are an intent classifier for a phone repair business.
 
+    Classify the user's message into EXACTLY ONE of these categories:
+
+    - product_info
+    - repair_info
+    - status_check
+    - appointment
+    - human_escalation
+    - general_chat
+
+    User message:
+    "{query}"
+
+    Return ONLY the category name.
+    """
+    
+    try:
+        response = llm.invoke(routing_prompt)
+        
+        intent = response.content.strip().lower()
+        
+        if intent in INTENTS:
+            print(f"🔍 Detected intent: {intent}")
+            return intent
+        
+    except Exception as e:
+        print(f"Error in routing: {e}")
+    
     return "general_chat"
 
 # Define node functions
