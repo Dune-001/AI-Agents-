@@ -341,6 +341,7 @@ def product_info_node(state: AgentState) -> dict:
     return state
 
 def repair_info_node(state: AgentState) -> dict:
+    '''This verson is not sufficient, replacig it with one that extracts repair issues from the message better
     """Handle repair service queries"""
     query = state["messages"][-1].content
     # Extract info from query (in real app, use NLP)
@@ -350,9 +351,54 @@ def repair_info_node(state: AgentState) -> dict:
         issue = "battery"
     else:
         issue = "general repair"
+    '''
+    
+    '''Handle repair quries smarter'''
+    
+    query = state["messages"][-1].content
+    extraction_prompt = f"""
+     Extract the phone type and repair issue from this message.
 
-    response = get_repair_info(phone_type="Phone", issue=issue)
-    state["messages"].append(AIMessage(content=response))
+    Message:
+    "{query}"
+
+    Return Only valid JSON format:
+    Example
+    {{
+        "phone_type": "Iphone 14",
+        "issue": "Screen cracked, needs replacement"
+    }}
+    """
+    
+    phone_type = "Unknown Phone"
+    issue = "general repair"
+    
+    try:
+        llm_response = llm.invoke(extraction_prompt)
+        
+        raw_content = llm_response.content.strip()
+        print(f"🔍 Debug extraction response: {raw_content}")
+    
+        # trying to extarct JSON safely
+        start = raw_content.find("{")
+        end = raw_content.rfind("}") + 1
+    
+        if start != 1 and end != -1:
+            json_text = raw_content[start:end]
+        
+            data = json.loads(json_text)
+            phone_type = data.get("phone_type", phone_type)
+            issue = data.get("issue", issue)
+        
+    except Exception as e:
+        print(f"Extraction error: {e}")
+
+    repair_response = get_repair_info(
+        phone_type=phone_type, issue=issue
+        )
+    state["messages"].append(
+        AIMessage(content=repair_response)
+        )
     state["current_step"] = "repair_info"
     return state
 
