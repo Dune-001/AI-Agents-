@@ -261,6 +261,50 @@ INTENTS = [
     "human_escalation"
 ]
 
+# memory conversation information
+def update_memory(state: AgentState, query:str):
+    """Extract and store some important conversation information"""
+    
+    memory = state.get("collected_info", {})
+    
+    extraction_prompt = f"""
+    Extract useful customer informaion from this message.
+    
+    Message:
+    "{query}"
+    
+    Return Only valid JSON format:
+    
+    Example:
+    {{
+        "phone_type": "Iphone 15",
+        "customer_name": "John Doe",
+    }}
+    
+    If information is missing, return empty fields.
+    """
+    
+    try:
+        response = llm.invoke(extraction_prompt)
+        
+        raw = response.content.strip()
+        
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        
+        if start != -1 and end != -1:
+            data = json.loads(raw[start:end])
+            
+            for key, value in data.items():
+                if value:
+                    memory[key] = value
+                    
+    except Exception as e:
+        print(f"Error in memory update: {e}")
+    
+    #conversational memory store    
+    state["collected_info"] = memory 
+    
 # defining router function
 def router(state: AgentState) -> str:
     ''' This router function was flawed, replacing it with an AI powered inten router 
@@ -298,6 +342,9 @@ def router(state: AgentState) -> str:
         return "general_chat"
     
     query = last_message.content
+    
+    # Update memory with any extracted information
+    update_memory(state, query)
     
     routing_prompt = f"""
     You are an intent classifier for a phone repair business.
@@ -369,9 +416,12 @@ def repair_info_node(state: AgentState) -> dict:
         "issue": "Screen cracked, needs replacement"
     }}
     """
+    # default values in case extraction fails
+    #phone_type = "Unknown Phone"
+    #issue = "general repair"
     
-    phone_type = "Unknown Phone"
-    issue = "general repair"
+    memory = state.get("collected_info", {})
+    phone_type = memory.get("phone_type", "Unknown Phone")
     
     try:
         llm_response = llm.invoke(extraction_prompt)
@@ -644,6 +694,9 @@ def test_bot():
 
         # Update state
         initial_state = result
+        
+        #debug visibility
+        print(f"\n🧠 Memory: {initial_state.get('collected_info')}")
 
         # Check if human escalation occurred
         if result.get("needs_human"):
