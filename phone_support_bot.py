@@ -277,10 +277,13 @@ def update_memory(state: AgentState, query:str):
     
     Example:
     {{
-        "phone_type": "Iphone 15",
-        "customer_name": "John Doe",
+        "phone_type": "...",
+        "customer_name": "...",
     }}
     
+    Do not generate schema.
+    Do not explain.
+    Do not add extra fields. 
     If information is missing, return empty fields.
     """
     
@@ -289,94 +292,96 @@ def update_memory(state: AgentState, query:str):
         
         raw = response.content.strip()
         
+        print(f"🧠 Raw memory respone: {raw}")
+        
         start = raw.find("{")
         end = raw.rfind("}") + 1
         
         if start != -1 and end != -1:
-            data = json.loads(raw[start:end])
             
-            for key, value in data.items():
-                if value:
-                    memory[key] = value
+            json_text = raw[start:end]
+            data = json.loads(json_text)
+            
+            allowed_keys = ["phone_type", "customer_name"]
+            
+            for key in allowed_keys:
+                value = data.get(key)
+                
+                # prevent: dict pollution, schema pollution and malformed memory objects
+                if isinstance(value, str) and value.strip():
+                    memory[key] = value.strip()
                     
     except Exception as e:
-        print(f"Error in memory update: {e}")
+        print(f"Error in memory extraction: {e}")
     
     #conversational memory store    
     state["collected_info"] = memory 
     
 # defining router function
-def router(state: AgentState) -> str:
-    ''' This router function was flawed, replacing it with an AI powered inten router 
-    """Route to appropriate node based on conversation state"""
-    last_message = state["messages"][-1]
-
-    if isinstance(last_message, HumanMessage):
-        query = last_message.content.lower()
-
-        # Check for specific intents
-        if any(word in query for word in ["phone", "model", "spec", "price", "buy"]):
-            return "product_info"
-        elif any(word in query for word in ["repair", "fix", "broken", "damage"]):
-            return "repair_info"
-        elif any(word in query for word in ["status", "track", "check", "ticket"]):
-            return "status_check"
-        elif any(word in query for word in ["appointment", "schedule", "book", "meet"]):
-            return "appointment"
-        elif any(word in query for word in ["help", "trouble", "issue", "problem"]):
-            return "troubleshooting"
-        elif any(word in query for word in ["warranty", "guarantee", "cover"]):
-            return "warranty_check"
-        elif any(word in query for word in ["contact", "store", "location", "hours"]):
-            return "contact_info"
-        elif any(word in query for word in ["human", "agent", "speak to", "representative"]):
-            return "human_escalation"
-        else:
-            return "general_chat"
-        '''
-        
-    """AI-powered intent router"""
+def router(state: AgentState) -> str:        
+    """Hybrid AI + rule-based intent router"""
     
     last_message = state["messages"][-1]
+    
     if not isinstance(last_message, HumanMessage):
         return "general_chat"
     
-    query = last_message.content
+    query = last_message.content.lower()
     
     # Update memory with any extracted information
     update_memory(state, query)
     
-    routing_prompt = f"""
-    You are an intent classifier for a phone repair business.
-
-    Classify the user's message into EXACTLY ONE of these categories:
-
-    - product_info
-    - repair_info
-    - status_check
-    - appointment
-    - human_escalation
-    - general_chat
-
-    User message:
-    "{query}"
-
-    Return ONLY the category name.
-    """
+    # Strong repair keywords
+    repair_keywords = ["repair", "fix", "broken", "damage", "screen", "battery", "camera", "water", "overheating", "not charging", "cracked", "unresponsive"]
     
-    try:
-        response = llm.invoke(routing_prompt)
-        
-        intent = response.content.strip().lower()
-        
-        if intent in INTENTS:
-            print(f"🔍 Detected intent: {intent}")
-            return intent
-        
-    except Exception as e:
-        print(f"Error in routing: {e}")
+    # Strong appointment keywords
+    appointment_keywords = ["appointment", "schedule", "book", "meet", "visit", "come in", "reserve"]
     
-    return "general_chat"
+    # Strong human escalation keywords
+    human_keywords = ["human", "agent", "representative", "speak to", "talk to", "help me", "need help", "customer service"]
+    
+    # Strong status check keywords
+    status_keywords = ["status", "track", "update", "progress", "repair status", "order status", "ticket"]
+    
+    # Hybrid rule checks
+    if any(keyword in query for keyword in repair_keywords):
+        intent = "repair_info"
+    elif any(keyword in query for keyword in appointment_keywords):
+        intent = "appointment"
+    elif any(keyword in query for keyword in human_keywords):
+        intent = "human_escalation"
+    elif any(keyword in query for keyword in status_keywords):
+        intent = "status_check"
+    else:
+        # fallback to LLM classification for more ambiguous queries
+        routing_prompt = f"""
+        You are an intent classifier for a phone repair business.
+
+        Classify the user's message into EXACTLY ONE of these categories:
+
+        - product_info
+        - repair_info
+        - status_check
+        - appointment
+        - human_escalation
+        - general_chat
+
+        User message:
+        "{query}"
+
+        Return ONLY the category name.
+        """
+    
+        try:
+            response = llm.invoke(routing_prompt)
+        
+            intent = response.content.strip().lower()
+        
+        except:
+            intent = "general_chat"
+            
+    print(f"🔍 Detected intent: {intent}")
+    return intent
 
 # Define node functions
 def product_info_node(state: AgentState) -> dict:
@@ -387,42 +392,45 @@ def product_info_node(state: AgentState) -> dict:
     state["current_step"] = "product_info"
     return state
 
-def repair_info_node(state: AgentState) -> dict:
-    '''This verson is not sufficient, replacig it with one that extracts repair issues from the message better
-    """Handle repair service queries"""
-    query = state["messages"][-1].content
-    # Extract info from query (in real app, use NLP)
-    if "screen" in query.lower():
-        issue = "screen"
-    elif "battery" in query.lower():
-        issue = "battery"
-    else:
-        issue = "general repair"
-    '''
-    
+# Defines repair node functions
+def repair_info_node(state: AgentState) -> dict:    
     '''Handle repair quries smarter'''
     
     query = state["messages"][-1].content
+    
+    # get conversation history
+    memory = state.get("collected_info", {})
+    
+    # default fallback values
+    phone_type = memory.get("phone_type", "Unknown Phone")
+    issue = "general repair"
+    
+    query_lower = query.lower()
+    
+    # Rule-based issue detection (more reliable)
+    if any(word in query_lower for word in ["screen", "display", "crack", "cracked"]):
+        issue = "screen"
+    elif any(word in query_lower for word in ["battery", "charge", "charging", "drains", "drain"]):
+        issue = "battery"
+    elif any(word in query_lower for word in ["camera", "photo", "picture", "video", "lens", "focus", "blurry"]):
+        issue = "camera"
+    elif any(word in query_lower for word in ["water", "liquid", "spill", "wet", "drowned", "submerged", "moisture", "humidity"]):
+        issue = "water_damage"
+    # optional AI enhancement    
     extraction_prompt = f"""
-     Extract the phone type and repair issue from this message.
+     Extract the phone type from this message.
 
     Message:
     "{query}"
 
     Return Only valid JSON format:
+    
     Example
     {{
-        "phone_type": "Iphone 14",
-        "issue": "Screen cracked, needs replacement"
+        "phone_type": "...",
     }}
     """
-    # default values in case extraction fails
-    #phone_type = "Unknown Phone"
-    #issue = "general repair"
-    
-    memory = state.get("collected_info", {})
-    phone_type = memory.get("phone_type", "Unknown Phone")
-    
+        
     try:
         llm_response = llm.invoke(extraction_prompt)
         
@@ -433,13 +441,15 @@ def repair_info_node(state: AgentState) -> dict:
         start = raw_content.find("{")
         end = raw_content.rfind("}") + 1
     
-        if start != 1 and end != -1:
+        if start != -1 and end != -1:
             json_text = raw_content[start:end]
         
             data = json.loads(json_text)
-            phone_type = data.get("phone_type", phone_type)
-            issue = data.get("issue", issue)
-        
+            extracted_phone = data.get("phone_type")
+
+            if isinstance(extracted_phone, str) and extracted_phone.strip() and extracted_phone.lower() != "null":
+                phone_type = extracted_phone.strip()
+                
     except Exception as e:
         print(f"Extraction error: {e}")
 
