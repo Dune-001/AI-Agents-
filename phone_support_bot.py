@@ -245,10 +245,8 @@ def provide_troubleshooting(issue: str) -> str:
 
 print("✅ Tool functions defined successfully!")
 
-
 ''' Building the LangGraph Agent '''
 ''' creating the graph nodes '''
-
 #defining intents for routing
 INTENTS = [
     "product_info",
@@ -328,6 +326,12 @@ def router(state: AgentState) -> str:
     
     query = last_message.content.lower()
     
+    memory = state.get("collected_info", {})
+    
+    # force appointment continuation if in booking workflow
+    if memory.get("booking_step"):
+        return "appointment"
+    
     # Update memory with any extracted information
     update_memory(state, query)
     
@@ -383,7 +387,8 @@ def router(state: AgentState) -> str:
     print(f"🔍 Detected intent: {intent}")
     return intent
 
-# Define node functions
+"""Define node functions"""
+# Defines product information node functions
 def product_info_node(state: AgentState) -> dict:
     """Handle product information queries"""
     query = state["messages"][-1].content
@@ -462,6 +467,7 @@ def repair_info_node(state: AgentState) -> dict:
     state["current_step"] = "repair_info"
     return state
 
+# Defines status check node functions
 def status_check_node(state: AgentState) -> dict:
     """Handle status check queries"""
     query = state["messages"][-1].content
@@ -478,60 +484,80 @@ def status_check_node(state: AgentState) -> dict:
     state["current_step"] = "status_check"
     return state
 
-# Handled in steps to give direction
+# Defines appointment booking node functions
 def appointment_node(state: AgentState) -> dict:
     """Handle appointment booking"""
     query = state["messages"][-1].content
-    collected = state.get("collected_info", {})
+    memory = state.get("collected_info", {})
+    booking_step = memory.get("booking_step")
     
     # start booking process
-    if not collected:
+    if booking_step is None:
+        memory["booking_step"] = "get_name"
         response = "Let's book your appointment! What's your name?"
-        state["collected_info"] = {"step": "get_name"}
     
-    elif collected("step") == "get_name":
-        collected["customer_name"] = query
-        collected["step"] = "phone_model"
+    # get customer name
+    elif booking_step == "get_name":
+        memory["customer_name"] = query
+        memory["booking_step"] = "get_phone"
+        
         response = "What phone model do you need repaired?"
-        
-    elif collected("step") == "phone_model":
-        collected["phone_type"] = query
-        collected["step"] = "issue"
+    
+    # get phone model    
+    elif booking_step == "get_phone":
+        memory["phone_type"] = query
+        memory["booking_step"] = "get_issue"
         response = "Please describe the issue with your phone."
-        
-    elif collected("step") == "issue":
-        collected["issue"] = query
-        collected["step"] = "date"
+    
+    # get issue description
+    elif booking_step == "get_issue":
+        memory["issue"] = query
+        memory["booking_step"] = "get_date"
         response = "What date would you prefer? (YYYY-MM-DD)"
-        
-    elif collected("step") == "date":
-        collected["date"] = query
-        collected["step"] = "time"
-        response = "What time would you prefer? (e.g., 2:00 PM)"
-        
-    elif collected("step") == "time":
-        collected["time"] = query
-        
-        response = book_appointment(
-            customer_name=collected["customer_name"],
-            phone_type=collected["phone_model"],
-            issue=collected["issue"],
-            preferred_date=collected["date"],
-            preferred_time=collected["time"],
-            contact="Not Provided"
+    
+    # get date
+    elif booking_step == "get_date":
+        memory["date"] = query
+        memory["booking_step"] = "get_time"
+        response = (
+            "What time would you prefer?\n\n"
+            "Available times:\n"
+            "- 9:00 AM\n"
+            "- 11:00 AM\n"
+            "- 2:00 PM\n"
+            "- 4:00 PM"
         )
+    # get time
+    elif booking_step == "get_time":
+        memory["time"] = query
+        memory["booking_step"] = "get_contact"
         
-        collected["step"] = "completed"
+        response = "Please provide a contact phone number or email for the appointment confirmation."
+        
+    # finalize booking
+    elif booking_step == "get_contact":
+        memory["contact"] = query
+            
+        response = book_appointment(
+            customer_name=memory["customer_name"],
+            phone_type=memory["phone_type"],
+            issue=memory["issue"],
+            preferred_date=memory["date"],
+            preferred_time=memory["time"],
+            contact=memory["contact"]
+        )
+        # clear booking workflow memory after completion
+        memory["booking_step"] = None
     else:
-        response = "Your appointment is already booked. If you want to book another, please let me know!"
+        response = "Sorry, I didn't understand that. Let's start over."
 
-    state["collected_info"] = collected
+    state["collected_info"] = memory
     state["messages"].append(AIMessage(content=response))
     state["current_step"] = "appointment_booking"
     
     return state
 
-
+# Defines general chat node functions
 def general_chat_node(state: AgentState) -> dict:
     """Handle general conversation using LLM"""
     # Get conversation history
@@ -565,6 +591,7 @@ def general_chat_node(state: AgentState) -> dict:
     state["current_step"] = "general_chat"
     return state
 
+# Defines human escalation node functions
 def human_escalation_node(state: AgentState) -> dict:
     """Escalate to human agent"""
     response = """I'm connecting you to a human agent now.
@@ -596,34 +623,7 @@ workflow.add_node("appointment", appointment_node)
 workflow.add_node("general_chat", general_chat_node)
 workflow.add_node("human_escalation", human_escalation_node)
 
-# this block led to many AI calls for one message so it will be chopped off
-''' 
-# entry point
-workflow.set_entry_point("general_chat")
-
-# conditional edges
-workflow.add_conditional_edges(
-    "general_chat",
-    router,
-    {
-        "product_info": "product_info",
-        "repair_info": "repair_info",
-        "status_check": "status_check",
-        "appointment": "appointment",
-        "human_escalation": "human_escalation",
-        "general_chat": "general_chat"
-    }
-)
-
-# adding edges from other nodes back to general_chat
-for node in ["product_info", "repair_info", "status_check", "appointment"]:
-    workflow.add_edge(node, "general_chat")
-
-# human escalation ends conversation
-workflow.add_edge("human_escalation", END)
-'''
-
-''' This is the replacement for the above block to avoid multiple LLM calls '''
+''' This is to avoid multiple LLM calls unlike a previous model'''
 # Router node
 workflow.add_node("router", lambda state: (state))
 
