@@ -112,6 +112,96 @@ REPAIR_JOBS = {
     }
 }
 
+
+""" Global Dictionary for Issue Keywords """
+ISSUE_PATTERNS = {
+    "screen": ["screen",
+        "display",
+        "touch",
+        "lcd",
+        "oled",
+        "glass",
+        "cracked",
+        "broken screen",
+        "green line",
+        "flicker",
+        "black screen"],
+    "battery": ["battery",
+        "charge",
+        "charging",
+        "charging issue",
+        "power",
+        "power issue",
+        "drain",
+        "dies quickly",
+        "not charging",
+        "overheating",
+        "not turning on",
+        "battery health"],
+    "camera": ["camera",
+        "photo",
+        "front camera",
+        "rear camera",
+        "picture",
+        "video",
+        "lens",
+        "focus",
+        "focus issue",
+        "blurry",
+        "camera not working",
+        "camera app crashing"],
+    "speaker": ["speaker",
+        "audio",
+        "sound",
+        "volume",
+        "no sound",
+        "distorted sound",
+        "speaker not working",
+        "microphone",
+        "microphone not working",
+        "audio recording issue",
+        "earpiece",
+        "earpiece not working",
+    ],
+    "water_damage": ["water",
+        "liquid",
+        "spill",
+        "wet",
+        "drowned",
+        "submerged",
+        "moisture",
+        "humidity",
+        "not turning on after water exposure",
+        "corrosion"
+    ]
+}
+
+# Reusable Classifier
+def classify_issue(user_text: str) -> str:
+    """Detect repair issue category"""
+    text = user_text.lower()
+    for issue, keywords in ISSUE_PATTERNS.items():
+        for keyword in keywords:
+            if keyword in text:
+                return issue
+    return "general_repair"
+
+# phone model extractor
+def extract_phone_model(query: str) -> Optional[str]:
+    """Extract phone model from user message"""
+    query_lower = query.lower()
+    # exact inventory matching
+    for model in PHONE_INVENTORY.keys():
+        if model.lower() in query_lower:
+            return model
+    # fuzzy/common matching i.e lingo acceptance
+    if "iphone 15" in query_lower:
+        return "iPhone 15"
+    elif "s23" in query_lower:
+        return "Samsung Galaxy S23"
+    return None
+
+""" Tool functions for the customer support bot. These functions will be called by the graph nodes to perform specific tasks based on user queries. """
 # Tool 1: Get Phone Information
 def get_phone_info(brand: str = None, model: str = None, feature: str = None) -> str:
     """Get information about phone models"""
@@ -146,12 +236,7 @@ def get_repair_info(phone_type: str, issue: str, urgency: str = "standard") -> s
         "water_damage": {"iPhone": "$299", "Samsung": "$279", "Other": "$259"}
     }
 
-    issue_lower = issue.lower()
-    price_key = None
-    for key in repair_prices:
-        if key in issue_lower:
-            price_key = key
-            break
+    price_key = classify_issue(issue)
 
     if price_key:
         brand = "iPhone" if "iphone" in phone_type.lower() else "Samsung" if "samsung" in phone_type.lower() else "Other"
@@ -243,6 +328,17 @@ def provide_troubleshooting(issue: str) -> str:
 
     return f"For {issue}, try these general steps:\n1. Restart your phone\n2. Update software\n3. Check for specific error messages\n4. Visit our store for diagnosis"
 
+    # this was to be upgraded after making the reusable classifier
+    '''issue_type = classify_issue(issue)
+
+    if issue_type in troubleshooting:
+
+        return (
+        f"Troubleshooting steps for {issue_type}:\n"
+        + "\n".join(troubleshooting[issue_type])
+        )
+    '''
+
 print("✅ Tool functions defined successfully!")
 
 ''' Building the LangGraph Agent '''
@@ -290,7 +386,7 @@ def update_memory(state: AgentState, query:str):
         
         raw = response.content.strip()
         
-        print(f"🧠 Raw memory respone: {raw}")
+        print(f"🧠 Raw memory response: {raw}")
         
         start = raw.find("{")
         end = raw.rfind("}") + 1
@@ -347,6 +443,9 @@ def router(state: AgentState) -> str:
     # Strong status check keywords
     status_keywords = ["status", "track", "update", "progress", "repair status", "order status", "ticket"]
     
+    # Strong product info keywords
+    product_keywords = ["phone", "model", "specs", "spec", "specifications", "features", "feature", "information", "details", "storage", "color", "colors", "price"]
+    
     # Hybrid rule checks
     if any(keyword in query for keyword in repair_keywords):
         intent = "repair_info"
@@ -356,6 +455,8 @@ def router(state: AgentState) -> str:
         intent = "human_escalation"
     elif any(keyword in query for keyword in status_keywords):
         intent = "status_check"
+    elif any(keyword in query for keyword in product_keywords):
+        intent = "product_info"
     else:
         # fallback to LLM classification for more ambiguous queries
         routing_prompt = f"""
@@ -392,7 +493,40 @@ def router(state: AgentState) -> str:
 def product_info_node(state: AgentState) -> dict:
     """Handle product information queries"""
     query = state["messages"][-1].content
-    response = get_phone_info(model=query)  # Simplified
+    #response = get_phone_info(model=query)  # Simplified
+    '''
+    model = extract_phone_model(query)
+    if model:
+        response = get_phone_info(model=model)
+    else:
+        # fallback to general info if model not detected
+        if "iphone" in query.lower():
+            response = get_phone_info(brand="iPhone")
+        elif "samsung" in query.lower():
+            response = get_phone_info(brand="Samsung")
+        else:
+            response = get_phone_info()
+    '''
+    memory = state.get("collected_info", {})
+    model = None
+    brand = None
+    #detect known models
+    for phone_model in PHONE_INVENTORY.keys():
+        if phone_model.lower() in query:
+            model = phone_model
+            break
+    # fallback to memory if not detected in query
+    if not model and "phone_type" in memory:
+        remembered_phone = memory.get("phone_type")
+        if remembered_phone in PHONE_INVENTORY:
+            model = remembered_phone
+    # detect brand
+    if "iphone" in query:
+        brand = "iPhone"
+    elif "samsung" in query:
+        brand = "Samsung"
+    response = get_phone_info(brand=brand, model=model)
+    
     state["messages"].append(AIMessage(content=response))
     state["current_step"] = "product_info"
     return state
@@ -408,6 +542,8 @@ def repair_info_node(state: AgentState) -> dict:
     
     # default fallback values
     phone_type = memory.get("phone_type", "Unknown Phone")
+    # this was to be upgraded after making the reusable classifier
+    #issue = classify_issue(query)
     issue = "general repair"
     
     query_lower = query.lower()
@@ -550,7 +686,7 @@ def appointment_node(state: AgentState) -> dict:
         memory["booking_step"] = None
     else:
         response = "Sorry, I didn't understand that. Let's start over."
-
+        
     state["collected_info"] = memory
     state["messages"].append(AIMessage(content=response))
     state["current_step"] = "appointment_booking"
